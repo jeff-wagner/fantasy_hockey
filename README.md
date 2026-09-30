@@ -1,8 +1,9 @@
 # FWHL Fantasy League (Shiny app)
 
 A live web app for the Fairbanks women's hockey fantasy league: draft board,
-standings, team rosters, and player stats. Managers only need the link; the
-commissioner signs in to enter picks and game stats.
+standings, team rosters, and player stats. Managers only need the link, plus a PIN
+if they want to make their own draft picks; the commissioner signs in to manage
+the league and enter game stats.
 
 ## Rules built into the app
 
@@ -25,9 +26,9 @@ These are constants at the top of `app.R` (`ROSTER_SIZE`, `MIN_NEW`, `PARTNER_PI
 |---|---|---|
 | Standings | everyone | rank, team totals, cumulative points chart |
 | Teams | everyone | each roster with G / A / PIM / points, new players marked ★ |
-| Draft | everyone (commissioner makes picks) | live draft board, on-the-clock banner, 2025-26 player pool with fantasy points |
+| Draft | everyone (managers pick with their PIN, or the commissioner picks for them) | live draft board, on-the-clock banner, 2025-26 player pool with fantasy points |
 | Player Stats | everyone | this season's totals and 2025-26 stats |
-| Commissioner | password | enter game stats, fix the game log, rename teams / set draft order, download an Excel backup |
+| Commissioner | password | enter game stats, fix the game log, rename teams / set draft order and PINs, download an Excel backup |
 
 Pages refresh automatically every few seconds, so managers watching the draft see picks appear.
 
@@ -45,8 +46,11 @@ The default commissioner password is `changeme`. Set `FHL_ADMIN_PASSWORD` before
 
 1. **Before the draft:** Commissioner → *Teams & draft order*. Double-click to rename
    managers and teams and set the draft order (1 = first pick), or click *Randomize draft order*
-   (only before the first pick). Add or remove managers as needed.
-2. **Draft night:** on the Draft tab, the manager on the clock is preselected. Pick a
+   (only before the first pick). Add or remove managers as needed. Click *Generate missing PINs*
+   and send each manager their PIN privately so they can make their own picks.
+2. **Draft night:** managers sign in on the Draft tab with their name and PIN and pick when
+   they're on the clock (they can only pick for themselves, in turn, and can't undo).
+   To pick for someone, sign in as commissioner: the manager on the clock is preselected. Pick a
    returning player from the search box, or switch to *New player* and type a name
    ("Jane Doe" is stored as "Doe, Jane"). *Undo last pick* fixes mistakes.
 3. **Each game night:** Commissioner → *Enter game stats*. Choose the date, double-click cells
