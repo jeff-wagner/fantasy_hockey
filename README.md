@@ -44,7 +44,8 @@ The default commissioner password is `changeme`. Set `FHL_ADMIN_PASSWORD` before
 ## Commissioner workflow
 
 1. **Before the draft:** Commissioner → *Teams & draft order*. Double-click to rename
-   managers and teams and set the draft order (1 = first pick). Add or remove managers as needed.
+   managers and teams and set the draft order (1 = first pick), or click *Randomize draft order*
+   (only before the first pick). Add or remove managers as needed.
 2. **Draft night:** on the Draft tab, the manager on the clock is preselected. Pick a
    returning player from the search box, or switch to *New player* and type a name
    ("Jane Doe" is stored as "Doe, Jane"). *Undo last pick* fixes mistakes.
