@@ -192,7 +192,8 @@ ui <- page_navbar(
         tags$li(HTML(sprintf("At least %d pick must be a <b>new</b> player: someone who did not play in the league in 2025-26. New players are marked <span class='new-badge'>&#9733;</span>.", MIN_NEW))),
         tags$li(HTML(sprintf("Exactly %d pick must be <b>another manager's partner</b>. You can't draft your own partner. Partner picks are marked <span class='partner-badge'>&#9829;</span>.", PARTNER_PICKS))),
         tags$li("A player can only be on one fantasy team."),
-        tags$li("The draft is a snake draft: order reverses every round.")
+        tags$li("The draft is a snake draft: order reverses every round."),
+        tags$li("When you're on the clock, sign in on the Draft tab with your PIN to make your pick (or tell the commissioner).")
       ),
       h4("Scoring"),
       tags$table(class = "table table-sm w-auto",
@@ -398,13 +399,26 @@ server <- function(input, output, session) {
               options = list(pageLength = 15, order = list(list(6, "desc"))))
   })
 
+  # Who this session picks for: the commissioner picks for anyone, a signed-in
+  # manager only for themselves.
+  picker <- reactive(if (is_admin()) input$pick_manager else me())
+
   output$draft_controls <- renderUI({
-    if (!is_admin()) return(tagList(
-      p(class = "text-muted", "Picks are entered by the commissioner and appear here live."),
+    if (!is_admin() && is.null(me())) return(tagList(
+      h6("Manager sign-in"),
+      selectInput("me_manager", NULL, c("Choose your name" = "", isolate(tables()$managers$manager))),
+      passwordInput("me_pin", NULL, placeholder = "PIN"),
+      actionButton("me_login", "Sign in to pick", class = "btn-primary w-100", icon = icon("right-to-bracket")),
+      p(class = "text-muted small mt-2", "Get your PIN from the commissioner. You can make your own picks when you're on the clock."),
+      hr(),
       p(class = "text-muted", "Use the player pool to scout: fantasy points use this year's scoring applied to last season.")))
     tagList(
-      selectInput("pick_manager", "Manager", isolate(tables()$managers$manager),
-                  selected = isolate(clock()$manager)),
+      if (is_admin())
+        selectInput("pick_manager", "Manager", isolate(tables()$managers$manager),
+                    selected = isolate(clock()$manager))
+      else div(class = "d-flex justify-content-between align-items-center mb-2",
+               tags$b(me()),
+               actionLink("me_logout", "Sign out", class = "small")),
       uiOutput("pick_needs"),
       radioButtons("pick_type", NULL, c("Returning player" = "returning", "New player" = "new"), inline = TRUE),
       conditionalPanel("input.pick_type == 'returning'",
@@ -415,10 +429,26 @@ server <- function(input, output, session) {
         selectizeInput("new_team", "League team", c("", LEAGUE_TEAMS),
                        options = list(create = TRUE, placeholder = "Team (optional)"))),
       actionButton("make_pick", "Make pick", class = "btn-primary w-100", icon = icon("check")),
-      hr(),
-      actionButton("undo_pick", "Undo last pick", class = "btn-outline-danger btn-sm w-100", icon = icon("rotate-left"))
+      if (is_admin()) tagList(hr(),
+        actionButton("undo_pick", "Undo last pick", class = "btn-outline-danger btn-sm w-100", icon = icon("rotate-left")))
     )
   })
+
+  # Manager sign-in (per session; PINs are set by the commissioner).
+  me <- reactiveVal(NULL)
+  pin_fails <- 0
+  observeEvent(input$me_login, {
+    if (pin_fails >= 5) return(showNotification("Too many wrong PINs. Reload the page to try again.", type = "error"))
+    m <- store_read("managers")
+    pin <- m$pin[m$manager == input$me_manager]
+    if (length(pin) == 1 && !is.na(pin) && nzchar(pin) && identical(trimws(input$me_pin), pin)) {
+      me(input$me_manager)
+    } else {
+      pin_fails <<- pin_fails + 1
+      showNotification("That name and PIN don't match.", type = "error")
+    }
+  })
+  observeEvent(input$me_logout, me(NULL))
 
   # Keep the pick form in sync without re-rendering it (so a half-made pick
   # isn't wiped when another update arrives).
@@ -429,7 +459,7 @@ server <- function(input, output, session) {
                       selected = if (!is.null(ck)) ck$manager else isolate(input$pick_manager))
   })
   observe({
-    req(is_admin())
+    req(is_admin() || !is.null(me()))
     avail <- pool() |> filter(status == "Available") |> arrange(desc(fpts))
     choices <- setNames(avail$player, paste0(sprintf("%s (%s) - %d pts", avail$player, avail$team, avail$fpts),
                                              ifelse(is.na(avail$partner_of), "", paste0(" - partner of ", avail$partner_of))))
@@ -442,13 +472,19 @@ server <- function(input, output, session) {
   outputOptions(output, "draft_controls", suspendWhenHidden = FALSE)
 
   output$pick_needs <- renderUI({
-    req(input$pick_manager)
-    t <- tables()
-    mine <- t$picks |> filter(manager == input$pick_manager)
+    who <- picker(); req(who)
+    t <- tables(); ck <- clock()
+    mine <- t$picks |> filter(manager == who)
     need_new <- max(0, MIN_NEW - sum(mine$is_new))
-    need_partner <- partners_needed(input$pick_manager, t$managers, t$picks)
-    own <- t$managers$partner[t$managers$manager == input$pick_manager]
-    tags$p(class = "small",
+    need_partner <- partners_needed(who, t$managers, t$picks)
+    own <- t$managers$partner[t$managers$manager == who]
+    tagList(
+      if (!is_admin()) {
+        if (is.null(ck)) div(class = "alert alert-success py-2 small", "The draft is complete.")
+        else if (ck$manager == who) div(class = "alert alert-warning py-2 small", icon("clock"), tags$b(" You're on the clock!"))
+        else div(class = "alert alert-light py-2 small", sprintf("Waiting: %s is on the clock.", ck$manager))
+      },
+      tags$p(class = "small",
       sprintf("%d of %d spots filled. ", nrow(mine), ROSTER_SIZE),
       if (need_new > 0) span(class = "new-badge", sprintf("Still needs %d new player.", need_new))
       else span(class = "text-success", "New-player requirement met."),
@@ -456,23 +492,31 @@ server <- function(input, output, session) {
       if (need_partner > 0) span(class = "partner-badge",
         sprintf("Still needs %d partner pick%s.", need_partner,
                 if (length(own) && !is.na(own)) sprintf(" (not %s)", own) else ""))
-      else span(class = "text-success", "Partner requirement met."))
+      else span(class = "text-success", "Partner requirement met.")))
   })
 
   observeEvent(input$make_pick, {
-    req(is_admin())
-    t <- tables()
+    who <- picker()
+    req(is_admin() || !is.null(me()), who)
+    # Read fresh so two people clicking at once can't both take the same slot.
+    managers <- store_read("managers"); picks <- store_read("picks") |> arrange(pick)
+    if (!is_admin()) {
+      ck <- on_the_clock(managers, picks)
+      if (is.null(ck)) return(showNotification("The draft is complete.", type = "warning"))
+      if (ck$manager != who)
+        return(showNotification(sprintf("It's not your turn: %s is on the clock.", ck$manager), type = "error"))
+    }
     is_new <- identical(input$pick_type, "new")
     player <- if (is_new) normalize_name(input$new_name) else input$pick_player
-    err <- check_pick(input$pick_manager, player, is_new, t$picks, t$managers)
+    err <- check_pick(who, player, is_new, picks, managers)
     if (!is.null(err)) return(showNotification(err, type = "error", duration = 8))
     team <- if (is_new) input$new_team else last_season$team[last_season$player == player][1]
-    new_row <- data.frame(pick = nrow(t$picks) + 1, manager = input$pick_manager,
+    new_row <- data.frame(pick = nrow(picks) + 1, manager = who,
                           player = player, is_new = is_new, league_team = team %||% "",
                           picked_at = format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
-    save("picks", bind_rows(t$picks, new_row))
+    save("picks", bind_rows(picks, new_row))
     updateTextInput(session, "new_name", value = "")
-    showNotification(sprintf("Pick %d: %s to %s", new_row$pick, player, input$pick_manager), type = "message")
+    showNotification(sprintf("Pick %d: %s to %s", new_row$pick, player, who), type = "message")
   })
 
   observeEvent(input$undo_pick, {
@@ -533,12 +577,13 @@ server <- function(input, output, session) {
         actionButton("delete_log", "Delete selected", class = "btn-outline-danger mt-2", icon = icon("trash"))
       ),
       nav_panel("Teams & draft order",
-        p(class = "text-muted", "Double-click to edit manager names, team names, draft order (1 = first pick), or partner (each manager's partner, \"Last, First\")."),
+        p(class = "text-muted", "Double-click to edit manager names, team names, draft order (1 = first pick), partner (each manager's partner, \"Last, First\"), or PIN (lets a manager sign in on the Draft tab and make their own picks)."),
         DTOutput("mgr_tbl", fill = FALSE),
         div(class = "mt-2 d-flex gap-2",
           actionButton("add_mgr", "Add manager", icon = icon("plus"), class = "btn-outline-primary"),
           actionButton("del_mgr", "Remove selected", icon = icon("trash"), class = "btn-outline-danger"),
-          actionButton("shuffle_order", "Randomize draft order", icon = icon("shuffle"), class = "btn-outline-secondary ms-auto"))
+          actionButton("gen_pins", "Generate missing PINs", icon = icon("key"), class = "btn-outline-secondary ms-auto"),
+          actionButton("shuffle_order", "Randomize draft order", icon = icon("shuffle"), class = "btn-outline-secondary"))
       ),
       nav_panel("Backup",
         p("Download every table (managers, picks, game log) as an Excel workbook."),
@@ -609,7 +654,7 @@ server <- function(input, output, session) {
   # Managers
   output$mgr_tbl <- renderDT({
     datatable(tables()$managers |> rename(Manager = manager, `Team name` = team_name,
-                                          `Draft order` = draft_order, Partner = partner),
+                                          `Draft order` = draft_order, Partner = partner, PIN = pin),
               rownames = FALSE, fillContainer = FALSE, editable = "cell",
               options = list(dom = "t", paging = FALSE, ordering = FALSE))
   })
@@ -629,6 +674,8 @@ server <- function(input, output, session) {
       m$draft_order[row] <- as.integer(info$value)
     } else if (col == "partner") {
       m$partner[row] <- if (nzchar(trimws(info$value))) normalize_name(info$value) else NA
+    } else if (col == "pin") {
+      m$pin[row] <- if (nzchar(trimws(info$value))) trimws(info$value) else NA
     } else m[[col]][row] <- info$value
     save("managers", m)
   })
@@ -648,6 +695,16 @@ server <- function(input, output, session) {
     if (any(m$manager[sel] %in% tables()$picks$manager))
       return(showNotification("Can't remove a manager who has drafted players. Undo their picks first.", type = "error"))
     save("managers", m[-sel, ])
+  })
+  observeEvent(input$gen_pins, {
+    req(is_admin())
+    m <- tables()$managers
+    missing <- is.na(m$pin) | !nzchar(m$pin)
+    if (!any(missing)) return(showNotification("Every manager already has a PIN.", type = "message"))
+    m$pin[missing] <- sprintf("%04d", sample.int(10000, sum(missing)) - 1L)
+    save("managers", m)
+    showNotification(sprintf("Created PINs for %d manager%s. Send each manager their own PIN.",
+                             sum(missing), if (sum(missing) == 1) "" else "s"), type = "message", duration = 8)
   })
   observeEvent(input$shuffle_order, {
     req(is_admin())

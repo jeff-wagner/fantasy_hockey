@@ -15,7 +15,8 @@ USE_GS   <- nzchar(GS_ID)
 
 SCHEMAS <- list(
   managers = list(manager = "character", team_name = "character",
-                  draft_order = "integer", partner = "character"),
+                  draft_order = "integer", partner = "character",
+                  pin = "character"),
   picks    = list(pick = "integer", manager = "character", player = "character",
                   is_new = "logical", league_team = "character",
                   picked_at = "character"),
