@@ -537,7 +537,8 @@ server <- function(input, output, session) {
         DTOutput("mgr_tbl", fill = FALSE),
         div(class = "mt-2 d-flex gap-2",
           actionButton("add_mgr", "Add manager", icon = icon("plus"), class = "btn-outline-primary"),
-          actionButton("del_mgr", "Remove selected", icon = icon("trash"), class = "btn-outline-danger"))
+          actionButton("del_mgr", "Remove selected", icon = icon("trash"), class = "btn-outline-danger"),
+          actionButton("shuffle_order", "Randomize draft order", icon = icon("shuffle"), class = "btn-outline-secondary ms-auto"))
       ),
       nav_panel("Backup",
         p("Download every table (managers, picks, game log) as an Excel workbook."),
@@ -647,6 +648,27 @@ server <- function(input, output, session) {
     if (any(m$manager[sel] %in% tables()$picks$manager))
       return(showNotification("Can't remove a manager who has drafted players. Undo their picks first.", type = "error"))
     save("managers", m[-sel, ])
+  })
+  observeEvent(input$shuffle_order, {
+    req(is_admin())
+    if (nrow(store_read("picks")))
+      return(showNotification("The draft has started. Undo every pick before changing the draft order.", type = "error"))
+    showModal(modalDialog(title = "Randomize draft order?",
+      "This replaces the current draft order with a random one. Everyone watching sees the new order right away.",
+      footer = tagList(modalButton("Cancel"), actionButton("shuffle_confirm", "Randomize", class = "btn-primary"))))
+  })
+  observeEvent(input$shuffle_confirm, {
+    req(is_admin())
+    removeModal()
+    m <- tables()$managers
+    if (nrow(store_read("picks"))) return(showNotification("The draft has started. Undo every pick before changing the draft order.", type = "error"))
+    m$draft_order <- sample.int(nrow(m))
+    save("managers", m)
+    m <- m[order(m$draft_order), ]
+    showModal(modalDialog(title = "New draft order", easyClose = TRUE,
+      tags$ol(lapply(seq_len(nrow(m)), function(i) tags$li(tags$b(m$manager[i]), " - ", m$team_name[i]))),
+      p(class = "text-muted small", "Snake draft: the order reverses every round."),
+      footer = modalButton("Done")))
   })
 
   output$backup <- downloadHandler(
