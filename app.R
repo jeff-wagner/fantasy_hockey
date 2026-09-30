@@ -18,11 +18,36 @@ ADMIN_PW     <- Sys.getenv("FHL_ADMIN_PASSWORD", "changeme")
 
 fpts <- function(g, a, pim) PTS_GOAL * g + PTS_ASSIST * a + PTS_PIM * pim
 
-# ---- Static data: last season ------------------------------------------------
+# ---- Static data -------------------------------------------------------------
 last_season <- read.csv("data/stats_2025_2026.csv", stringsAsFactors = FALSE) |>
   mutate(fpts = fpts(goals, assists, pim),
          fpts_gp = round(fpts / pmax(gp, 1), 2))
-LEAGUE_TEAMS <- sort(unique(last_season$team))
+
+# The draft pool is this season's roster. Returning players are matched to last
+# season by name; data/name_aliases.csv links names spelled differently in the two
+# files ("Levasseur, Trisha" was "Levasseur, Trish"). Anyone unmatched is new.
+aliases <- read.csv("data/name_aliases.csv", stringsAsFactors = FALSE, strip.white = TRUE)
+players <- read.csv("data/players_2026_2027.csv", stringsAsFactors = FALSE, strip.white = TRUE) |>
+  mutate(player = paste0(Last, ", ", First)) |>
+  group_by(player) |>                       # a few players are on two teams
+  summarise(team = paste(unique(Team), collapse = ", "),
+            pos  = paste(sort(unique(Pos)), collapse = ", "), .groups = "drop")
+stats_row <- match(
+  tolower(coalesce(aliases$stats_name[match(tolower(players$player), tolower(aliases$roster_name))], players$player)),
+  tolower(last_season$player))
+players <- players |>
+  mutate(is_new = is.na(stats_row),
+         last_season[stats_row, c("gp", "goals", "assists", "pim", "fpts", "fpts_gp")])
+
+# Map any spelling (last season's, or different capitalization) to the roster's,
+# so partners entered with old spellings still line up.
+canon_name <- function(x) {
+  i <- match(tolower(x), tolower(aliases$stats_name))
+  x <- ifelse(is.na(i), x, aliases$roster_name[i])
+  j <- match(tolower(x), tolower(players$player))
+  ifelse(is.na(j), x, players$player[j])
+}
+canon_managers <- function(m) { m$partner <- canon_name(m$partner); m }
 
 # "hali morrow" -> "Morrow, Hali" so new names match last season's format.
 normalize_name <- function(x) {
@@ -94,14 +119,14 @@ partners_feasible <- function(managers, picks) {
 }
 
 # Returns NULL if the pick is legal, otherwise an error message.
-check_pick <- function(manager, player, is_new, picks, managers) {
+check_pick <- function(manager, player, picks, managers) {
   mine <- picks[picks$manager == manager, ]
   if (!nzchar(player)) return("Choose a player.")
   if (nrow(mine) >= ROSTER_SIZE) return(sprintf("%s already has %d players.", manager, ROSTER_SIZE))
   taken <- picks[tolower(picks$player) == tolower(player), ]
   if (nrow(taken)) return(sprintf("%s was already drafted by %s.", player, taken$manager[1]))
-  if (is_new && tolower(player) %in% tolower(last_season$player))
-    return(sprintf("%s played in 2025-26, so they are not a new player. Pick them from the returning list instead.", player))
+  if (!player %in% players$player) return(sprintf("%s isn't on the 2026-27 roster.", player))
+  is_new <- players$is_new[players$player == player]
 
   if (identical(partner_of(player, managers), manager))
     return(sprintf("%s is %s's own partner. Managers can't draft their own partner.", player, manager))
@@ -116,7 +141,7 @@ check_pick <- function(manager, player, is_new, picks, managers) {
   new_left <- max(0, MIN_NEW - sum(mine$is_new) - is_new)
   partner_left <- partners_needed(manager, managers, after)
   # A partner who is also a new player could cover both at once.
-  both_at_once <- any(!tolower(eligible_partners(manager, managers, after)) %in% tolower(last_season$player))
+  both_at_once <- any(players$is_new[players$player %in% eligible_partners(manager, managers, after)])
   spots_needed <- if (both_at_once) max(new_left, partner_left) else new_left + partner_left
   wants <- c(if (!is_new && new_left > 0) "a new player",
              if (!partner_pick && partner_left > 0) "another manager's partner")
@@ -169,7 +194,7 @@ ui <- page_navbar(
       sidebar = sidebar(width = 340, open = "desktop", uiOutput("draft_controls")),
       card(card_header("Draft board"), uiOutput("draft_board")),
       card(
-        card_header("Player pool: 2025-26 stats",
+        card_header("Player pool: 2026-27 roster, with 2025-26 stats",
                     class = "d-flex justify-content-between align-items-center",
                     checkboxInput("hide_drafted", "Hide drafted", TRUE)),
         DTOutput("pool_tbl", fill = FALSE)
@@ -189,7 +214,7 @@ ui <- page_navbar(
       h4("How it works"),
       tags$ul(
         tags$li(sprintf("Each manager drafts %d players from the Fairbanks women's league.", ROSTER_SIZE)),
-        tags$li(HTML(sprintf("At least %d pick must be a <b>new</b> player: someone who did not play in the league in 2025-26. New players are marked <span class='new-badge'>&#9733;</span>.", MIN_NEW))),
+        tags$li(HTML(sprintf("At least %d pick must be a <b>new</b> player: someone on the 2026-27 roster who did not play in the league in 2025-26. New players are marked <span class='new-badge'>&#9733;</span>.", MIN_NEW))),
         tags$li(HTML(sprintf("Exactly %d pick must be <b>another manager's partner</b>. You can't draft your own partner. Partner picks are marked <span class='partner-badge'>&#9829;</span>.", PARTNER_PICKS))),
         tags$li("A player can only be on one fantasy team."),
         tags$li("The draft is a snake draft: order reverses every round."),
@@ -203,7 +228,7 @@ ui <- page_navbar(
           tags$tr(tags$td("Penalty minute"), tags$td(sprintf("%d point per minute", PTS_PIM)))
         )
       ),
-      p(class = "text-muted", "2025-26 fantasy points in the Draft tab use the same formula, to help with drafting.")
+      p(class = "text-muted", "The Draft tab lists this season's roster. Its fantasy points are last season's stats scored with this formula, to help with drafting.")
     ))
   ),
 
@@ -222,7 +247,7 @@ server <- function(input, output, session) {
   poll <- reactivePoll(4000, session, store_version, store_version)
   tables <- reactive({
     db_bump(); poll()
-    list(managers = store_read("managers") |> arrange(draft_order),
+    list(managers = store_read("managers") |> canon_managers() |> arrange(draft_order),
          picks    = store_read("picks") |> arrange(pick),
          game_log = store_read("game_log"))
   })
@@ -382,7 +407,7 @@ server <- function(input, output, session) {
 
   pool <- reactive({
     p <- tables()$picks
-    last_season |>
+    players |>
       left_join(p |> select(player, manager), by = "player") |>
       mutate(status = ifelse(is.na(manager), "Available", paste("Drafted:", manager)),
              partner_of = partner_of(player, tables()$managers))
@@ -392,11 +417,12 @@ server <- function(input, output, session) {
     d <- pool()
     if (isTRUE(input$hide_drafted)) d <- d |> filter(status == "Available")
     d <- d |> arrange(desc(fpts)) |>
-      transmute(Player = player, Team = team, GP = gp, G = goals, A = assists,
-                PIM = pim, `Fantasy pts` = fpts, `Pts/GP` = fpts_gp,
+      transmute(Player = player, New = ifelse(is_new, "★ New", ""), Pos = pos, Team = team,
+                GP = gp, G = goals, A = assists, PIM = pim, `Fantasy pts` = fpts, `Pts/GP` = fpts_gp,
                 `Partner of` = coalesce(partner_of, ""), Status = status)
     datatable(d, rownames = FALSE, fillContainer = FALSE, selection = "none", filter = "top",
-              options = list(pageLength = 15, order = list(list(6, "desc"))))
+              options = list(pageLength = 15, order = list(list(8, "desc")))) |>
+      formatStyle("New", color = "#d97706", fontWeight = "bold")
   })
 
   # Who this session picks for: the commissioner picks for anyone, a signed-in
@@ -420,14 +446,8 @@ server <- function(input, output, session) {
                tags$b(me()),
                actionLink("me_logout", "Sign out", class = "small")),
       uiOutput("pick_needs"),
-      radioButtons("pick_type", NULL, c("Returning player" = "returning", "New player" = "new"), inline = TRUE),
-      conditionalPanel("input.pick_type == 'returning'",
-        selectizeInput("pick_player", "Player", NULL,
-                       options = list(placeholder = "Search last season's players"))),
-      conditionalPanel("input.pick_type == 'new'",
-        textInput("new_name", "Player name", placeholder = "First Last"),
-        selectizeInput("new_team", "League team", c("", LEAGUE_TEAMS),
-                       options = list(create = TRUE, placeholder = "Team (optional)"))),
+      selectizeInput("pick_player", "Player", NULL,
+                     options = list(placeholder = "Search the 2026-27 roster")),
       actionButton("make_pick", "Make pick", class = "btn-primary w-100", icon = icon("check")),
       if (is_admin()) tagList(hr(),
         actionButton("undo_pick", "Undo last pick", class = "btn-outline-danger btn-sm w-100", icon = icon("rotate-left")))
@@ -461,7 +481,8 @@ server <- function(input, output, session) {
   observe({
     req(is_admin() || !is.null(me()))
     avail <- pool() |> filter(status == "Available") |> arrange(desc(fpts))
-    choices <- setNames(avail$player, paste0(sprintf("%s (%s) - %d pts", avail$player, avail$team, avail$fpts),
+    choices <- setNames(avail$player, paste0(avail$player, " (", avail$team, ifelse(grepl("G", avail$pos), ", G", ""), ") - ",
+                                             ifelse(avail$is_new, "★ new", sprintf("%d pts", avail$fpts)),
                                              ifelse(is.na(avail$partner_of), "", paste0(" - partner of ", avail$partner_of))))
     keep <- isolate(input$pick_player)
     updateSelectizeInput(session, "pick_player", choices = c("", choices),
@@ -499,23 +520,21 @@ server <- function(input, output, session) {
     who <- picker()
     req(is_admin() || !is.null(me()), who)
     # Read fresh so two people clicking at once can't both take the same slot.
-    managers <- store_read("managers"); picks <- store_read("picks") |> arrange(pick)
+    managers <- canon_managers(store_read("managers")); picks <- store_read("picks") |> arrange(pick)
     if (!is_admin()) {
       ck <- on_the_clock(managers, picks)
       if (is.null(ck)) return(showNotification("The draft is complete.", type = "warning"))
       if (ck$manager != who)
         return(showNotification(sprintf("It's not your turn: %s is on the clock.", ck$manager), type = "error"))
     }
-    is_new <- identical(input$pick_type, "new")
-    player <- if (is_new) normalize_name(input$new_name) else input$pick_player
-    err <- check_pick(who, player, is_new, picks, managers)
+    player <- input$pick_player
+    err <- check_pick(who, player, picks, managers)
     if (!is.null(err)) return(showNotification(err, type = "error", duration = 8))
-    team <- if (is_new) input$new_team else last_season$team[last_season$player == player][1]
+    pl <- players[players$player == player, ]
     new_row <- data.frame(pick = nrow(picks) + 1, manager = who,
-                          player = player, is_new = is_new, league_team = team %||% "",
+                          player = player, is_new = pl$is_new, league_team = pl$team,
                           picked_at = format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
     save("picks", bind_rows(picks, new_row))
-    updateTextInput(session, "new_name", value = "")
     showNotification(sprintf("Pick %d: %s to %s", new_row$pick, player, who), type = "message")
   })
 
@@ -673,7 +692,7 @@ server <- function(input, output, session) {
     } else if (col == "draft_order") {
       m$draft_order[row] <- as.integer(info$value)
     } else if (col == "partner") {
-      m$partner[row] <- if (nzchar(trimws(info$value))) normalize_name(info$value) else NA
+      m$partner[row] <- if (nzchar(trimws(info$value))) canon_name(normalize_name(info$value)) else NA
     } else if (col == "pin") {
       m$pin[row] <- if (nzchar(trimws(info$value))) trimws(info$value) else NA
     } else m[[col]][row] <- info$value

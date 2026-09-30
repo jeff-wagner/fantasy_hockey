@@ -2581,19 +2581,25 @@
   },
   "files": {
     "app.R": {
-      "checksum": "6b2fe8675c7b5323a322db0de360dc73"
+      "checksum": "d25a9437272d3a58252cbf52627db33e"
     },
     "data/managers.csv": {
       "checksum": "13620fa053c14ec4f58859d2f961b532"
     },
+    "data/name_aliases.csv": {
+      "checksum": "c2102b9f44f89c3cd53c3901167d4870"
+    },
     "data/picks.csv": {
       "checksum": "b3a4330c8d5acbd99c7482f0d3894935"
+    },
+    "data/players_2026_2027.csv": {
+      "checksum": "ecff2174f764dd35f1dfd7f920ae7e80"
     },
     "data/stats_2025_2026.csv": {
       "checksum": "c5ed8d66a7d2801a7ace337702cdadb3"
     },
     "R/storage.R": {
-      "checksum": "592b2bcc6aea4843a15aec5b7d570ce4"
+      "checksum": "ee0b327ae7fb6819d2f62fc07c266ad7"
     }
   },
   "users": null
