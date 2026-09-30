@@ -1,0 +1,12 @@
+# Secrets: never commit these
+.Renviron
+*.json
+!manifest.json
+
+# Local/generated
+.Rhistory
+.RData
+.Rproj.user/
+*.html
+*_files/
+data/*.tmp
