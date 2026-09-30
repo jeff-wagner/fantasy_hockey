@@ -26,12 +26,14 @@ last_season <- read.csv("data/stats_2025_2026.csv", stringsAsFactors = FALSE) |>
 # The draft pool is this season's roster. Returning players are matched to last
 # season by name; data/name_aliases.csv links names spelled differently in the two
 # files ("Levasseur, Trisha" was "Levasseur, Trish"). Anyone unmatched is new.
+# Goalies aren't draftable (last season's stats don't cover them), but someone who
+# is a goalie on one team and a skater on another stays, with their skater team.
 aliases <- read.csv("data/name_aliases.csv", stringsAsFactors = FALSE, strip.white = TRUE)
 players <- read.csv("data/players_2026_2027.csv", stringsAsFactors = FALSE, strip.white = TRUE) |>
+  filter(Pos != "G") |>
   mutate(player = paste0(Last, ", ", First)) |>
-  group_by(player) |>                       # a few players are on two teams
-  summarise(team = paste(unique(Team), collapse = ", "),
-            pos  = paste(sort(unique(Pos)), collapse = ", "), .groups = "drop")
+  group_by(player) |>                       # in case a skater is on two teams
+  summarise(team = paste(unique(Team), collapse = ", "), .groups = "drop")
 stats_row <- match(
   tolower(coalesce(aliases$stats_name[match(tolower(players$player), tolower(aliases$roster_name))], players$player)),
   tolower(last_season$player))
@@ -417,11 +419,11 @@ server <- function(input, output, session) {
     d <- pool()
     if (isTRUE(input$hide_drafted)) d <- d |> filter(status == "Available")
     d <- d |> arrange(desc(fpts)) |>
-      transmute(Player = player, New = ifelse(is_new, "★ New", ""), Pos = pos, Team = team,
+      transmute(Player = player, New = ifelse(is_new, "★ New", ""), Team = team,
                 GP = gp, G = goals, A = assists, PIM = pim, `Fantasy pts` = fpts, `Pts/GP` = fpts_gp,
                 `Partner of` = coalesce(partner_of, ""), Status = status)
     datatable(d, rownames = FALSE, fillContainer = FALSE, selection = "none", filter = "top",
-              options = list(pageLength = 15, order = list(list(8, "desc")))) |>
+              options = list(pageLength = 15, order = list(list(7, "desc")))) |>
       formatStyle("New", color = "#d97706", fontWeight = "bold")
   })
 
@@ -481,7 +483,7 @@ server <- function(input, output, session) {
   observe({
     req(is_admin() || !is.null(me()))
     avail <- pool() |> filter(status == "Available") |> arrange(desc(fpts))
-    choices <- setNames(avail$player, paste0(avail$player, " (", avail$team, ifelse(grepl("G", avail$pos), ", G", ""), ") - ",
+    choices <- setNames(avail$player, paste0(avail$player, " (", avail$team, ") - ",
                                              ifelse(avail$is_new, "★ new", sprintf("%d pts", avail$fpts)),
                                              ifelse(is.na(avail$partner_of), "", paste0(" - partner of ", avail$partner_of))))
     keep <- isolate(input$pick_player)
