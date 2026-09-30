@@ -110,6 +110,8 @@ Connect Cloud publishes from a GitHub repository (public or private).
    data/managers.csv
    data/picks.csv
    data/stats_2025_2026.csv
+   data/players_2026_2027.csv
+   data/name_aliases.csv
    manifest.json
    README.md
    DEPLOY.md
@@ -121,13 +123,14 @@ Connect Cloud publishes from a GitHub repository (public or private).
    commit → Publish), which respects `.gitignore`. If you use the website's
    **Add file → Upload files** instead, it does *not* check `.gitignore`: upload only the
    files above, and never `.Renviron` or the key `.json`.
-3. `manifest.json` tells Connect Cloud which R version and packages to install. If you
-   later add packages or update R, regenerate it before pushing:
+3. `manifest.json` tells Connect Cloud which R version, packages, and files to install. If you
+   later add packages, add data files, or update R, regenerate it before pushing:
 
    ```r
    rsconnect::writeManifest("H:/R/fantasy_hockey",
      appFiles = c("app.R", "R/storage.R", "data/managers.csv",
-                  "data/picks.csv", "data/stats_2025_2026.csv"))
+                  "data/picks.csv", "data/stats_2025_2026.csv",
+                  "data/players_2026_2027.csv", "data/name_aliases.csv"))
    ```
 
 ## 7. Publish on Connect Cloud

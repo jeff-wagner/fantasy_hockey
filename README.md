@@ -8,9 +8,13 @@ the league and enter game stats.
 ## Rules built into the app
 
 - 5 players per team, snake draft (the order reverses each round).
-- Each team needs at least 1 **new** player: someone not in the 2025-26 stats.
+- The draft pool is the 2026-27 roster (`data/players_2026_2027.csv`). Players are matched
+  to their 2025-26 stats by name; `data/name_aliases.csv` links names spelled differently
+  in the two files ("Levasseur, Trisha" was "Levasseur, Trish"). Add a row there if a
+  returning player shows up as new.
+- Each team needs at least 1 **new** player: someone on the roster with no 2025-26 stats.
   The app blocks a manager's last open spot from going to a returning player
-  if they don't have a new player yet, and blocks entering a 2025-26 player as "new".
+  if they don't have a new player yet.
 - Each team needs exactly 1 **partner pick**: another manager's partner (the `partner`
   column in `managers`). Managers can't draft their own partner. The app blocks a pick that
   would leave a manager without room for their partner pick, and blocks taking a partner if
@@ -26,7 +30,7 @@ These are constants at the top of `app.R` (`ROSTER_SIZE`, `MIN_NEW`, `PARTNER_PI
 |---|---|---|
 | Standings | everyone | rank, team totals, cumulative points chart |
 | Teams | everyone | each roster with G / A / PIM / points, new players marked ★ |
-| Draft | everyone (managers pick with their PIN, or the commissioner picks for them) | live draft board, on-the-clock banner, 2025-26 player pool with fantasy points |
+| Draft | everyone (managers pick with their PIN, or the commissioner picks for them) | live draft board, on-the-clock banner, 2026-27 player pool with last season's fantasy points and new players marked |
 | Player Stats | everyone | this season's totals and 2025-26 stats |
 | Commissioner | password | enter game stats, fix the game log, rename teams / set draft order and PINs, download an Excel backup |
 
@@ -51,8 +55,7 @@ The default commissioner password is `changeme`. Set `FHL_ADMIN_PASSWORD` before
 2. **Draft night:** managers sign in on the Draft tab with their name and PIN and pick when
    they're on the clock (they can only pick for themselves, in turn, and can't undo).
    To pick for someone, sign in as commissioner: the manager on the clock is preselected. Pick a
-   returning player from the search box, or switch to *New player* and type a name
-   ("Jane Doe" is stored as "Doe, Jane"). *Undo last pick* fixes mistakes.
+   player from the roster search box. *Undo last pick* fixes mistakes.
 3. **Each game night:** Commissioner → *Enter game stats*. Choose the date, double-click cells
    to enter G / A / PIM for drafted players, then *Save game stats*. Fix errors in *Game log*.
 4. Use *Backup* now and then to download everything as an .xlsx.
@@ -60,6 +63,7 @@ The default commissioner password is `changeme`. Set `FHL_ADMIN_PASSWORD` before
 ## Data and hosting
 
 League state lives in three tables: `managers`, `picks`, `game_log`.
+`data/players_2026_2027.csv` is this season's roster (the draft pool) and
 `data/stats_2025_2026.csv` is last season (rebuild it with `Rscript prep_data.R tracker.xlsx`).
 
 - **Default (CSV files in `data/`)**: fine on your own computer, a lab server, Shiny Server, or Posit Connect.
