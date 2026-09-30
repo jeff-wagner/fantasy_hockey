@@ -8,7 +8,8 @@ the league and enter game stats.
 ## Rules built into the app
 
 - 5 players per team, snake draft (the order reverses each round).
-- The draft pool is the 2026-27 roster (`data/players_2026_2027.csv`). Players are matched
+- The draft pool is the skaters on the 2026-27 roster (`data/players_2026_2027.csv`); goalies
+  aren't draftable, except players who also skate for another team. Players are matched
   to their 2025-26 stats by name; `data/name_aliases.csv` links names spelled differently
   in the two files ("Levasseur, Trisha" was "Levasseur, Trish"). Add a row there if a
   returning player shows up as new.
