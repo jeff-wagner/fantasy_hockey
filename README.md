@@ -17,7 +17,8 @@ the league and enter game stats.
   The app blocks a manager's last open spot from going to a returning player
   if they don't have a new player yet.
 - Each team needs exactly 1 **partner pick**: another manager's partner (the `partner`
-  column in `managers`). Managers can't draft their own partner. The app blocks a pick that
+  column in `managers`). Managers can't draft their own partner. A manager with no partner
+  listed is exempt from this rule (but every other rule applies). The app blocks a pick that
   would leave a manager without room for their partner pick, and blocks taking a partner if
   that would leave some other manager with no partner they're allowed to draft.
 - A player can only be on one team.
