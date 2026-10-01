@@ -1,4 +1,4 @@
-# Fairbanks Women's Hockey -- Fantasy League tracker
+# Fairbanks Women's Hockey Association (FWHA) -- Fantasy League tracker
 # Files in R/ are sourced automatically by Shiny (storage layer lives there).
 
 library(shiny)
@@ -173,7 +173,7 @@ theme <- bs_theme(version = 5, preset = "flatly",
                   base_font = font_google("Inter"))
 
 ui <- page_navbar(
-  title = "FWHL Fantasy",
+  title = "FWHA Fantasy",
   theme = theme,
   fillable = FALSE,
   header = tags$style(HTML("
@@ -222,7 +222,7 @@ ui <- page_navbar(
     card(card_body(
       h4("How it works"),
       tags$ul(
-        tags$li(sprintf("Each manager drafts %d players from the Fairbanks women's league.", ROSTER_SIZE)),
+        tags$li(sprintf("Each manager drafts %d players from the Fairbanks Women's Hockey Association.", ROSTER_SIZE)),
         tags$li(HTML(sprintf("At least %d pick must be a <b>new</b> player: someone on the 2026-27 roster who did not play in the league in 2025-26. New players are marked <span class='new-badge'>&#9733;</span>.", MIN_NEW))),
         tags$li(HTML(sprintf("Exactly %d pick must be <b>another manager's partner</b>. You can't draft your own partner. Managers without a partner in the league are exempt. Partner picks are marked <span class='partner-badge'>&#9829;</span>.", PARTNER_PICKS))),
         tags$li("A player can only be on one fantasy team."),
