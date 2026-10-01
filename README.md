@@ -1,6 +1,6 @@
-# FWHL Fantasy League (Shiny app)
+# FWHA Fantasy League (Shiny app)
 
-A live web app for the Fairbanks women's hockey fantasy league: draft board,
+A live web app for the Fairbanks Women's Hockey Association (FWHA) fantasy league: draft board,
 standings, team rosters, and player stats. Managers only need the link, plus a PIN
 if they want to make their own draft picks; the commissioner signs in to manage
 the league and enter game stats.
