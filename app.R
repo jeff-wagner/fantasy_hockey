@@ -75,6 +75,7 @@ on_the_clock <- function(managers, picks) {
 # ---- Partner rule ------------------------------------------------------------
 # Each manager's partner is listed in the managers table. Every manager must draft
 # exactly PARTNER_PICKS player(s) from that list, and can never draft their own partner.
+# A manager with no partner listed is exempt from the partner requirement.
 
 # Manager whose partner this player is (NA if nobody's).
 partner_of <- function(player, managers)
@@ -92,7 +93,13 @@ eligible_partners <- function(manager, managers, picks) {
   p[!tolower(p) %in% tolower(picks$player)]
 }
 
+has_partner <- function(manager, managers) {
+  own <- managers$partner[managers$manager == manager]
+  length(own) == 1 && !is.na(own) && nzchar(own)
+}
+
 partners_needed <- function(manager, managers, picks) {
+  if (!has_partner(manager, managers)) return(0)
   if (!any(!is.na(managers$partner) & managers$manager != manager)) return(0)
   mine <- picks$player[picks$manager == manager]
   max(0, PARTNER_PICKS - sum(is_partner_pick(manager, mine, managers)))
@@ -133,7 +140,7 @@ check_pick <- function(manager, player, picks, managers) {
   if (identical(partner_of(player, managers), manager))
     return(sprintf("%s is %s's own partner. Managers can't draft their own partner.", player, manager))
   partner_pick <- is_partner_pick(manager, player, managers)
-  if (partner_pick && partners_needed(manager, managers, picks) == 0)
+  if (partner_pick && has_partner(manager, managers) && partners_needed(manager, managers, picks) == 0)
     return(sprintf("%s already has %d partner pick%s, the most allowed.", manager,
                    PARTNER_PICKS, if (PARTNER_PICKS == 1) "" else "s"))
 
@@ -217,7 +224,7 @@ ui <- page_navbar(
       tags$ul(
         tags$li(sprintf("Each manager drafts %d players from the Fairbanks women's league.", ROSTER_SIZE)),
         tags$li(HTML(sprintf("At least %d pick must be a <b>new</b> player: someone on the 2026-27 roster who did not play in the league in 2025-26. New players are marked <span class='new-badge'>&#9733;</span>.", MIN_NEW))),
-        tags$li(HTML(sprintf("Exactly %d pick must be <b>another manager's partner</b>. You can't draft your own partner. Partner picks are marked <span class='partner-badge'>&#9829;</span>.", PARTNER_PICKS))),
+        tags$li(HTML(sprintf("Exactly %d pick must be <b>another manager's partner</b>. You can't draft your own partner. Managers without a partner in the league are exempt. Partner picks are marked <span class='partner-badge'>&#9829;</span>.", PARTNER_PICKS))),
         tags$li("A player can only be on one fantasy team."),
         tags$li("The draft is a snake draft: order reverses every round."),
         tags$li("When you're on the clock, sign in on the Draft tab with your PIN to make your pick (or tell the commissioner).")
@@ -515,6 +522,7 @@ server <- function(input, output, session) {
       if (need_partner > 0) span(class = "partner-badge",
         sprintf("Still needs %d partner pick%s.", need_partner,
                 if (length(own) && !is.na(own)) sprintf(" (not %s)", own) else ""))
+      else if (!has_partner(who, t$managers)) span(class = "text-muted", "No partner pick needed (no partner in the league).")
       else span(class = "text-success", "Partner requirement met.")))
   })
 
