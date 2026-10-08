@@ -10,7 +10,6 @@ library(ggplot2)
 # ---- League rules ------------------------------------------------------------
 ROSTER_SIZE  <- 5
 MIN_NEW      <- 1                 # players who did not play in 2025-26
-PARTNER_PICKS <- 1                # exactly this many picks must be another manager's partner
 PTS_GOAL     <- 2
 PTS_ASSIST   <- 1
 PTS_PIM      <- 1                 # per penalty minute
@@ -49,7 +48,9 @@ canon_name <- function(x) {
   j <- match(tolower(x), tolower(players$player))
   ifelse(is.na(j), x, players$player[j])
 }
-canon_managers <- function(m) { m$partner <- canon_name(m$partner); m }
+canon_managers <- function(m) {
+  m$partner <- canon_name(m$partner); m$assigned <- canon_name(m$assigned); m
+}
 
 # "hali morrow" -> "Morrow, Hali" so new names match last season's format.
 normalize_name <- function(x) {
@@ -73,9 +74,11 @@ on_the_clock <- function(managers, picks) {
 }
 
 # ---- Partner rule ------------------------------------------------------------
-# Each manager's partner is listed in the managers table. Every manager must draft
-# exactly PARTNER_PICKS player(s) from that list, and can never draft their own partner.
-# A manager with no partner listed is exempt from the partner requirement.
+# Each manager's partner is listed in the managers table. Before the draft, the
+# commissioner randomly assigns every manager who has a partner a different
+# manager's partner (never their own), stored in managers$assigned. Those are
+# made automatically as that manager's round-1 pick; managers with no partner
+# make a regular round-1 pick. Partners can't be drafted any other way.
 
 # Manager whose partner this player is (NA if nobody's).
 partner_of <- function(player, managers)
@@ -87,80 +90,88 @@ is_partner_pick <- function(manager, player, managers) {
   !is.na(o) & o != manager
 }
 
-# Undrafted partners this manager could use for their partner pick.
-eligible_partners <- function(manager, managers, picks) {
-  p <- managers$partner[managers$manager != manager & !is.na(managers$partner)]
-  p[!tolower(p) %in% tolower(picks$player)]
+has_partner_v <- function(managers) !is.na(managers$partner) & nzchar(managers$partner)
+has_partner <- function(manager, managers) isTRUE(has_partner_v(managers)[managers$manager == manager])
+
+assigned_to <- function(manager, managers) managers$assigned[match(manager, managers$manager)]
+
+# TRUE once every manager with a partner has been assigned one (or nobody has a partner).
+partners_assigned <- function(managers)
+  all(!is.na(managers$assigned[has_partner_v(managers)]))
+
+# Random assignment: each partnered manager gets another partnered manager's
+# partner, never their own (a random derangement).
+assign_partners <- function(managers) {
+  p <- which(has_partner_v(managers))
+  if (length(p) < 2) stop("At least two managers need partners to assign them.")
+  repeat { perm <- p[sample.int(length(p))]; if (all(perm != p)) break }
+  managers$assigned <- NA_character_
+  managers$assigned[p] <- managers$partner[perm]
+  managers
 }
 
-has_partner <- function(manager, managers) {
-  own <- managers$partner[managers$manager == manager]
-  length(own) == 1 && !is.na(own) && nzchar(own)
+# Picks that were made automatically from the partner assignment.
+is_auto_pick <- function(picks, managers) {
+  a <- assigned_to(picks$manager, managers)
+  !is.na(a) & tolower(picks$player) == tolower(a)
 }
 
-partners_needed <- function(manager, managers, picks) {
-  if (!has_partner(manager, managers)) return(0)
-  if (!any(!is.na(managers$partner) & managers$manager != manager)) return(0)
-  mine <- picks$player[picks$manager == manager]
-  max(0, PARTNER_PICKS - sum(is_partner_pick(manager, mine, managers)))
+pick_row <- function(picks, manager, player) {
+  pl <- players[players$player == player, ]
+  data.frame(pick = nrow(picks) + 1L, manager = manager, player = player,
+             is_new = if (nrow(pl)) pl$is_new else FALSE,
+             league_team = if (nrow(pl)) pl$team else "",
+             picked_at = format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
 }
 
-# Can every manager still needing a partner get a different undrafted one that
-# isn't their own? (Bipartite matching, so the draft can't dead-end on the last pick.)
-partners_feasible <- function(managers, picks) {
-  slots <- unlist(lapply(managers$manager, function(m)
-    rep(m, partners_needed(m, managers, picks))))
-  opts <- lapply(slots, function(m) tolower(eligible_partners(m, managers, picks)))
-  owner <- list()   # partner -> index of the slot that has claimed them
-  augment <- function(i, seen) {
-    for (p in opts[[i]]) {
-      if (p %in% seen$v) next
-      seen$v <- c(seen$v, p)
-      if (is.null(owner[[p]]) || augment(owner[[p]], seen)) {
-        owner[[p]] <<- i
-        return(TRUE)
-      }
-    }
-    FALSE
+# Make every assigned partner pick that's due: while a manager with an assigned
+# partner is on the clock in round 1, give them that partner.
+auto_fill <- function(managers, picks) {
+  repeat {
+    ck <- on_the_clock(managers, picks)
+    if (is.null(ck) || ck$round != 1) break
+    a <- assigned_to(ck$manager, managers)
+    if (is.na(a)) break
+    picks <- bind_rows(picks, pick_row(picks, ck$manager, a))
   }
-  for (i in seq_along(slots)) if (!augment(i, new.env())) return(FALSE)
-  TRUE
+  picks
+}
+
+# Picks the commissioner's "Undo last pick" removes: the last pick a person made,
+# plus the automatic partner picks after it. If only automatic picks are left,
+# all of them (which resets the partner assignment).
+undo_rows <- function(picks, managers) {
+  k <- nrow(picks)
+  if (!k) return(integer())
+  auto <- is_auto_pick(picks, managers)
+  i <- k
+  while (i >= 1 && auto[i]) i <- i - 1
+  max(i, 1):k
 }
 
 # Returns NULL if the pick is legal, otherwise an error message.
 check_pick <- function(manager, player, picks, managers) {
   mine <- picks[picks$manager == manager, ]
   if (!nzchar(player)) return("Choose a player.")
+  if (!partners_assigned(managers))
+    return("Partners haven't been assigned yet. The commissioner does this before the draft starts.")
+  a <- assigned_to(manager, managers)
+  if (!is.na(a) && !tolower(a) %in% tolower(mine$player))
+    return(sprintf("%s's round-1 pick is their assigned partner, %s, made automatically.", manager, a))
   if (nrow(mine) >= ROSTER_SIZE) return(sprintf("%s already has %d players.", manager, ROSTER_SIZE))
   taken <- picks[tolower(picks$player) == tolower(player), ]
   if (nrow(taken)) return(sprintf("%s was already drafted by %s.", player, taken$manager[1]))
   if (!player %in% players$player) return(sprintf("%s isn't on the 2026-27 roster.", player))
+  if (!is.na(partner_of(player, managers)))
+    return(sprintf("%s is %s's partner. Partners are assigned in round 1, not drafted.",
+                   player, partner_of(player, managers)))
+
+  # After this pick, the remaining spots must still cover the new-player rule.
   is_new <- players$is_new[players$player == player]
-
-  if (identical(partner_of(player, managers), manager))
-    return(sprintf("%s is %s's own partner. Managers can't draft their own partner.", player, manager))
-  partner_pick <- is_partner_pick(manager, player, managers)
-  if (partner_pick && has_partner(manager, managers) && partners_needed(manager, managers, picks) == 0)
-    return(sprintf("%s already has %d partner pick%s, the most allowed.", manager,
-                   PARTNER_PICKS, if (PARTNER_PICKS == 1) "" else "s"))
-
-  # After this pick, the remaining spots must still cover every requirement.
-  after <- rbind(picks[c("manager", "player")], data.frame(manager = manager, player = player))
   slots_left <- ROSTER_SIZE - nrow(mine) - 1
-  new_left <- max(0, MIN_NEW - sum(mine$is_new) - is_new)
-  partner_left <- partners_needed(manager, managers, after)
-  # A partner who is also a new player could cover both at once.
-  both_at_once <- any(players$is_new[players$player %in% eligible_partners(manager, managers, after)])
-  spots_needed <- if (both_at_once) max(new_left, partner_left) else new_left + partner_left
-  wants <- c(if (!is_new && new_left > 0) "a new player",
-             if (!partner_pick && partner_left > 0) "another manager's partner")
-  if (spots_needed > slots_left && length(wants)) {
-    return(sprintf("%s has %d spot%s left and still needs %s.",
-                   manager, slots_left + 1, if (slots_left == 0) "" else "s",
-                   paste(wants, collapse = " and ")))
-  }
-  if (!is.na(partner_of(player, managers)) && !partners_feasible(managers, after))
-    return(sprintf("Taking %s would leave another manager with no partner they can draft.", player))
+  if (MIN_NEW - sum(mine$is_new) - is_new > slots_left)
+    return(sprintf("%s has %d spot%s left and still needs a new player.",
+                   manager, slots_left + 1, if (slots_left == 0) "" else "s"))
   NULL
 }
 
@@ -224,7 +235,7 @@ ui <- page_navbar(
       tags$ul(
         tags$li(sprintf("Each manager drafts %d players from the Fairbanks Women's Hockey Association.", ROSTER_SIZE)),
         tags$li(HTML(sprintf("At least %d pick must be a <b>new</b> player: someone on the 2026-27 roster who did not play in the league in 2025-26. New players are marked <span class='new-badge'>&#9733;</span>.", MIN_NEW))),
-        tags$li(HTML(sprintf("Exactly %d pick must be <b>another manager's partner</b>. You can't draft your own partner. Managers without a partner in the league are exempt. Partner picks are marked <span class='partner-badge'>&#9829;</span>.", PARTNER_PICKS))),
+        tags$li(HTML("In round 1, each manager with a partner in the league is <b>randomly assigned another manager's partner</b> (never their own), and that pick is made automatically. Managers without a partner make a regular round-1 pick. Partners can't be drafted otherwise. Partner picks are marked <span class='partner-badge'>&#9829;</span>.")),
         tags$li("A player can only be on one fantasy team."),
         tags$li("The draft is a snake draft: order reverses every round."),
         tags$li("When you're on the clock, sign in on the Draft tab with your PIN to make your pick (or tell the commissioner).")
@@ -418,8 +429,10 @@ server <- function(input, output, session) {
     p <- tables()$picks
     players |>
       left_join(p |> select(player, manager), by = "player") |>
-      mutate(status = ifelse(is.na(manager), "Available", paste("Drafted:", manager)),
-             partner_of = partner_of(player, tables()$managers))
+      mutate(partner_of = partner_of(player, tables()$managers),
+             status = case_when(!is.na(manager) ~ paste("Drafted:", manager),
+                                !is.na(partner_of) ~ "Partner: assigned in round 1",
+                                TRUE ~ "Available"))
   })
 
   output$pool_tbl <- renderDT({
@@ -491,8 +504,7 @@ server <- function(input, output, session) {
     req(is_admin() || !is.null(me()))
     avail <- pool() |> filter(status == "Available") |> arrange(desc(fpts))
     choices <- setNames(avail$player, paste0(avail$player, " (", avail$team, ") - ",
-                                             ifelse(avail$is_new, "★ new", sprintf("%d pts", avail$fpts)),
-                                             ifelse(is.na(avail$partner_of), "", paste0(" - partner of ", avail$partner_of))))
+                                             ifelse(avail$is_new, "★ new", sprintf("%d pts", avail$fpts))))
     keep <- isolate(input$pick_player)
     updateSelectizeInput(session, "pick_player", choices = c("", choices),
                          selected = if (isTRUE(keep %in% avail$player)) keep else "",
@@ -506,10 +518,11 @@ server <- function(input, output, session) {
     t <- tables(); ck <- clock()
     mine <- t$picks |> filter(manager == who)
     need_new <- max(0, MIN_NEW - sum(mine$is_new))
-    need_partner <- partners_needed(who, t$managers, t$picks)
-    own <- t$managers$partner[t$managers$manager == who]
+    assigned <- assigned_to(who, t$managers)
     tagList(
-      if (!is_admin()) {
+      if (!partners_assigned(t$managers))
+        div(class = "alert alert-light py-2 small", "Waiting for the commissioner to assign partners.")
+      else if (!is_admin()) {
         if (is.null(ck)) div(class = "alert alert-success py-2 small", "The draft is complete.")
         else if (ck$manager == who) div(class = "alert alert-warning py-2 small", icon("clock"), tags$b(" You're on the clock!"))
         else div(class = "alert alert-light py-2 small", sprintf("Waiting: %s is on the clock.", ck$manager))
@@ -519,11 +532,9 @@ server <- function(input, output, session) {
       if (need_new > 0) span(class = "new-badge", sprintf("Still needs %d new player.", need_new))
       else span(class = "text-success", "New-player requirement met."),
       br(),
-      if (need_partner > 0) span(class = "partner-badge",
-        sprintf("Still needs %d partner pick%s.", need_partner,
-                if (length(own) && !is.na(own)) sprintf(" (not %s)", own) else ""))
-      else if (!has_partner(who, t$managers)) span(class = "text-muted", "No partner pick needed (no partner in the league).")
-      else span(class = "text-success", "Partner requirement met.")))
+      if (!has_partner(who, t$managers)) span(class = "text-muted", "No partner: regular pick in round 1.")
+      else if (is.na(assigned)) span(class = "partner-badge", "Partner will be assigned for round 1.")
+      else span(class = "partner-badge", HTML(sprintf("Round-1 partner: %s &#9829;", assigned)))))
   })
 
   observeEvent(input$make_pick, {
@@ -540,27 +551,41 @@ server <- function(input, output, session) {
     player <- input$pick_player
     err <- check_pick(who, player, picks, managers)
     if (!is.null(err)) return(showNotification(err, type = "error", duration = 8))
-    pl <- players[players$player == player, ]
-    new_row <- data.frame(pick = nrow(picks) + 1, manager = who,
-                          player = player, is_new = pl$is_new, league_team = pl$team,
-                          picked_at = format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
-    save("picks", bind_rows(picks, new_row))
-    showNotification(sprintf("Pick %d: %s to %s", new_row$pick, player, who), type = "message")
+    new_row <- pick_row(picks, who, player)
+    after <- auto_fill(managers, bind_rows(picks, new_row))
+    save("picks", after)
+    auto <- nrow(after) - nrow(picks) - 1
+    showNotification(paste0(sprintf("Pick %d: %s to %s.", new_row$pick, player, who),
+                            if (auto > 0) sprintf(" Then %d assigned partner pick%s.", auto, if (auto == 1) "" else "s")),
+                     type = "message")
   })
 
   observeEvent(input$undo_pick, {
     req(is_admin())
-    p <- tables()$picks
-    if (!nrow(p)) return()
+    pk <- store_read("picks") |> arrange(pick); m <- canon_managers(store_read("managers"))
+    if (!nrow(pk)) return()
+    rows <- undo_rows(pk, m)
     showModal(modalDialog(title = "Undo last pick?",
-      sprintf("Remove pick %d: %s (%s)?", p$pick[nrow(p)], p$player[nrow(p)], p$manager[nrow(p)]),
+      if (length(rows) == 1) sprintf("Remove pick %d: %s (%s)?", pk$pick[rows], pk$player[rows], pk$manager[rows])
+      else tagList(p(sprintf("This removes %d picks:", length(rows))),
+                   tags$ul(lapply(rows, function(i) tags$li(sprintf("#%d %s (%s)%s", pk$pick[i], pk$player[i], pk$manager[i],
+                                                                    if (is_auto_pick(pk[i, ], m)) ", assigned partner" else ""))))),
+      if (length(rows) == nrow(pk) && all(is_auto_pick(pk, m)) && any(!is.na(m$assigned)))
+        p(class = "text-muted small", "That's every pick, so the partner assignment is cleared too. Assign partners again before restarting the draft."),
       footer = tagList(modalButton("Cancel"), actionButton("undo_confirm", "Undo", class = "btn-danger"))))
   })
   observeEvent(input$undo_confirm, {
     req(is_admin())
-    p <- tables()$picks
-    save("picks", p[-nrow(p), ])
     removeModal()
+    pk <- store_read("picks") |> arrange(pick); m <- canon_managers(store_read("managers"))
+    rows <- undo_rows(pk, m)
+    if (!length(rows)) return()
+    only_auto <- all(is_auto_pick(pk[rows, ], m))
+    pk <- pk[-rows, ]
+    save("picks", pk)
+    # Undoing nothing but automatic picks takes the draft back to before the
+    # assignment, so clear it (otherwise those picks would be due again at once).
+    if (!nrow(pk) && only_auto && any(!is.na(m$assigned))) { m$assigned <- NA_character_; save("managers", m) }
   })
 
   # ---- Player stats tab ------------------------------------------------------
@@ -612,7 +637,9 @@ server <- function(input, output, session) {
           actionButton("add_mgr", "Add manager", icon = icon("plus"), class = "btn-outline-primary"),
           actionButton("del_mgr", "Remove selected", icon = icon("trash"), class = "btn-outline-danger"),
           actionButton("gen_pins", "Generate missing PINs", icon = icon("key"), class = "btn-outline-secondary ms-auto"),
-          actionButton("shuffle_order", "Randomize draft order", icon = icon("shuffle"), class = "btn-outline-secondary"))
+          actionButton("shuffle_order", "Randomize draft order", icon = icon("shuffle"), class = "btn-outline-secondary"),
+          actionButton("assign_partners", "Assign partners", icon = icon("heart"), class = "btn-outline-primary")),
+        p(class = "text-muted small mt-2", "Set the draft order first, then assign partners: round-1 partner picks are made as soon as they're assigned.")
       ),
       nav_panel("Backup",
         p("Download every table (managers, picks, game log) as an Excel workbook."),
@@ -683,7 +710,8 @@ server <- function(input, output, session) {
   # Managers
   output$mgr_tbl <- renderDT({
     datatable(tables()$managers |> rename(Manager = manager, `Team name` = team_name,
-                                          `Draft order` = draft_order, Partner = partner, PIN = pin),
+                                          `Draft order` = draft_order, Partner = partner, PIN = pin,
+                                          `Assigned partner (round 1)` = assigned),
               rownames = FALSE, fillContainer = FALSE, editable = "cell",
               options = list(dom = "t", paging = FALSE, ordering = FALSE))
   })
@@ -692,6 +720,10 @@ server <- function(input, output, session) {
     info <- input$mgr_tbl_cell_edit
     m <- tables()$managers; p <- tables()$picks
     col <- names(m)[info$col + 1]; row <- info$row
+    if (col == "assigned")
+      return(showNotification("Use Assign partners to set round-1 partners.", type = "error"))
+    if (col == "partner" && any(!is.na(m$assigned)))
+      return(showNotification("Partners are already assigned. Undo every pick to change partners.", type = "error"))
     if (col == "manager") {
       new <- trimws(info$value); old <- m$manager[row]
       if (!nzchar(new) || new %in% m$manager[-row])
@@ -734,6 +766,35 @@ server <- function(input, output, session) {
     save("managers", m)
     showNotification(sprintf("Created PINs for %d manager%s. Send each manager their own PIN.",
                              sum(missing), if (sum(missing) == 1) "" else "s"), type = "message", duration = 8)
+  })
+  observeEvent(input$assign_partners, {
+    req(is_admin())
+    if (nrow(store_read("picks")))
+      return(showNotification("The draft has started. Undo every pick before reassigning partners.", type = "error"))
+    m <- canon_managers(store_read("managers"))
+    off <- m$partner[has_partner_v(m) & !m$partner %in% players$player]
+    if (length(off))
+      return(showNotification(sprintf("Not on the 2026-27 roster: %s. Fix the partner name first.", paste(off, collapse = "; ")), type = "error", duration = 10))
+    if (sum(has_partner_v(m)) < 2)
+      return(showNotification("At least two managers need partners to assign them.", type = "error"))
+    showModal(modalDialog(title = "Assign partners?",
+      "Each manager with a partner is randomly given another manager's partner (never their own) as their round-1 pick. Picks are made right away for managers at the front of round 1; the draft then waits for the first manager without a partner.",
+      footer = tagList(modalButton("Cancel"), actionButton("assign_confirm", "Assign partners", class = "btn-primary"))))
+  })
+  observeEvent(input$assign_confirm, {
+    req(is_admin())
+    removeModal()
+    if (nrow(store_read("picks")))
+      return(showNotification("The draft has started. Undo every pick before reassigning partners.", type = "error"))
+    m <- assign_partners(canon_managers(store_read("managers")))
+    save("managers", m)
+    save("picks", auto_fill(m, store_read("picks")))
+    m <- m[order(m$draft_order), ]
+    showModal(modalDialog(title = "Round-1 partners", easyClose = TRUE,
+      tags$ul(lapply(seq_len(nrow(m)), function(i) tags$li(tags$b(m$manager[i]), ": ",
+        if (is.na(m$assigned[i])) span(class = "text-muted", "no partner, regular pick")
+        else span(m$assigned[i], span(class = "partner-badge", HTML(" &#9829;")))))),
+      footer = modalButton("Done")))
   })
   observeEvent(input$shuffle_order, {
     req(is_admin())
