@@ -23,6 +23,9 @@ the league and enter game stats.
   no partner listed make a regular round-1 pick. Partners can't be picked any other way.
 - A player can only be on one team.
 - Scoring: goal = 2, assist = 1, penalty minute = 1.
+- **Draft score:** the bottom row of the draft board adds up each team's drafted players'
+  points ratings (1-10) from the 2026-27 roster sheet (`data/ratings_2026_2027.csv`). Players
+  without a rating count as 0 and are flagged as unrated.
 
 These are constants at the top of `app.R` (`ROSTER_SIZE`, `MIN_NEW`, `PTS_*`) if the league changes them.
 
