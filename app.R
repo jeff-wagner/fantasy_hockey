@@ -40,6 +40,11 @@ players <- players |>
   mutate(is_new = is.na(stats_row),
          last_season[stats_row, c("gp", "goals", "assists", "pim", "fpts", "fpts_gp")])
 
+# Team-rep points ratings (1-10) from the 2026-27 roster sheet, keyed to the
+# roster's spelling of each name. Used for each team's draft score.
+ratings <- read.csv("data/ratings_2026_2027.csv", stringsAsFactors = FALSE, strip.white = TRUE)
+players$rating_pts <- ratings$points[match(tolower(players$player), tolower(ratings$player))]
+
 # Map any spelling (last season's, or different capitalization) to the roster's,
 # so partners entered with old spellings still line up.
 canon_name <- function(x) {
@@ -419,10 +424,16 @@ server <- function(input, output, session) {
         }
       }))
     })
+    # Draft score: sum of the drafted players' points ratings from the roster sheet.
+    score_row <- tags$tr(tags$th("Draft score"), lapply(t$managers$manager, function(m) {
+      pts <- players$rating_pts[match(t$picks$player[t$picks$manager == m], players$player)]
+      tags$td(tags$b(sum(pts, na.rm = TRUE)),
+              if (any(is.na(pts))) tags$small(class = "text-muted", sprintf(" (%d unrated)", sum(is.na(pts)))))
+    }))
     div(class = "table-responsive",
         tags$table(class = "table table-bordered draft-board mb-0",
-                   tags$thead(head_row), tags$tbody(body)),
-        tags$small(class = "text-muted", HTML("&#9733; = new player (did not play in 2025-26) &nbsp; &#9829; = partner pick")))
+                   tags$thead(head_row), tags$tbody(body), tags$tfoot(score_row)),
+        tags$small(class = "text-muted", HTML("&#9733; = new player (did not play in 2025-26) &nbsp; &#9829; = partner pick &nbsp; Draft score = total of the players' points ratings (1-10) from the 2026-27 roster sheet")))
   })
 
   pool <- reactive({
