@@ -269,13 +269,17 @@ server <- function(input, output, session) {
   is_admin <- reactiveVal(FALSE)
 
   # Live data: re-read when this process writes (db_bump) or the store changes.
+  # On Google Sheets the version ticks every GS_TTL seconds whether or not anything
+  # changed, so keep the data in a reactiveVal: setting it to an identical value
+  # doesn't invalidate anything, so tables only redraw (and lose their sorting)
+  # when the data really changes.
   poll <- reactivePoll(4000, session, store_version, store_version)
-  tables <- reactive({
-    db_bump(); poll()
+  read_tables <- function()
     list(managers = store_read("managers") |> canon_managers() |> arrange(draft_order),
          picks    = store_read("picks") |> arrange(pick),
          game_log = store_read("game_log"))
-  })
+  tables <- reactiveVal(read_tables())
+  observe({ db_bump(); poll(); tables(read_tables()) })
   save <- function(name, df) {
     store_write(name, df)
     db_bump(db_bump() + 1)
@@ -454,7 +458,7 @@ server <- function(input, output, session) {
                 GP = gp, G = goals, A = assists, PIM = pim, `Fantasy pts` = fpts, `Pts/GP` = fpts_gp,
                 `Partner of` = coalesce(partner_of, ""), Status = status)
     datatable(d, rownames = FALSE, fillContainer = FALSE, selection = "none", filter = "top",
-              options = list(pageLength = 15, order = list(list(7, "desc")))) |>
+              options = list(stateSave = TRUE, pageLength = 15, order = list(list(7, "desc")))) |>
       formatStyle("New", color = "#d97706", fontWeight = "bold")
   })
 
@@ -608,7 +612,7 @@ server <- function(input, output, session) {
       transmute(Player = player, `Fantasy team` = coalesce(team_name, "(undrafted)"),
                 G = goals, A = assists, PIM = pim, `Fantasy pts` = fpts)
     datatable(d, rownames = FALSE, fillContainer = FALSE, selection = "none", filter = "top",
-              options = list(pageLength = 25, language = list(emptyTable = "No stats entered yet this season.")))
+              options = list(stateSave = TRUE, pageLength = 25, language = list(emptyTable = "No stats entered yet this season.")))
   })
 
   output$last_tbl <- renderDT({
@@ -616,7 +620,7 @@ server <- function(input, output, session) {
       transmute(Player = player, Team = team, GP = gp, G = goals, A = assists,
                 PIM = pim, `Hat tricks` = hat_tricks, `Fantasy pts` = fpts, `Pts/GP` = fpts_gp)
     datatable(d, rownames = FALSE, fillContainer = FALSE, selection = "none", filter = "top",
-              options = list(pageLength = 25))
+              options = list(stateSave = TRUE, pageLength = 25))
   })
 
   # ---- Commissioner tab ------------------------------------------------------
@@ -706,7 +710,7 @@ server <- function(input, output, session) {
   output$log_tbl <- renderDT({
     datatable(log_view() |> transmute(Date = game_date, Player = player, G = goals,
                                       A = assists, PIM = pim, Pts = fpts(goals, assists, pim)),
-              rownames = FALSE, fillContainer = FALSE, options = list(pageLength = 25))
+              rownames = FALSE, fillContainer = FALSE, options = list(stateSave = TRUE, pageLength = 25))
   })
   observeEvent(input$delete_log, {
     req(is_admin())
